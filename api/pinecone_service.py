@@ -1,20 +1,20 @@
 import psycopg2
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from django.conf import settings  # Ensure your settings contain database credentials
+from django.conf import settings  # Ensure settings contain database credentials
 
 # ✅ Initialize Pinecone (New API)
 from pinecone import Pinecone, ServerlessSpec
 
 pc = Pinecone(api_key=settings.PINECONE_API_KEY)
-PINECONE_DIMENSIONS=437
+PINECONE_DIMENSIONS = 437
 index_name = "related-products"
 
 # ✅ Create Index if Not Exists
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=PINECONE_DIMENSIONS,  #Ensure this matches TF-IDF output
+        dimension=PINECONE_DIMENSIONS,  # Ensure this matches TF-IDF output
         metric="cosine",
         spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Adjust region as needed
     )
@@ -39,12 +39,11 @@ def get_postgres_connection():
 def fetch_products():
     conn = get_postgres_connection()
     cursor = conn.cursor()
-
     cursor.execute("SELECT product_id, vendor_id, brand, name, description, category_id, sub_category_id FROM product")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
-
+    
     data = []
     for row in rows:
         product_id, vendor_id, brand, name, description, category_id, sub_category_id = row
@@ -58,7 +57,7 @@ def fetch_products():
         }
         text = f"{brand} {name} {category_id} {sub_category_id} {description}"
         data.append({"id": str(product_id), "text": text, "metadata": metadata})  # Ensure ID is a string
-
+    
     return data
 
 
@@ -67,7 +66,7 @@ def compute_tfidf_vectors():
     product_data = fetch_products()
     texts = [p["text"] for p in product_data]
 
-    vectorizer = TfidfVectorizer(stop_words="english",max_features=PINECONE_DIMENSIONS)
+    vectorizer = TfidfVectorizer(stop_words="english", max_features=PINECONE_DIMENSIONS)
     vectors = vectorizer.fit_transform(texts).toarray()
 
     # 🔥 Fix: Ensure vectors have exactly 437 dimensions
@@ -84,14 +83,12 @@ def compute_tfidf_vectors():
     pinecone_vectors = [(p["id"], padded_vectors[i].tolist(), p.get("metadata", {})) for i, p in enumerate(product_data)]
     return pinecone_vectors
 
+
 # ✅ Insert Embeddings (Only If Empty)
 def insert_embeddings():
     if index_name in pc.list_indexes().names():
         vectors = compute_tfidf_vectors()
-
-        # 🔥 Fix: Upsert expects tuples (id, vector, metadata)
         pinecone_vectors = [{"id": v[0], "values": v[1], "metadata": v[2]} for v in vectors]
-        
         index.upsert(vectors=pinecone_vectors)
         print("✅ Embeddings inserted into Pinecone!")
 
@@ -123,5 +120,3 @@ def get_related_products(product_id, top_k=5):
 
     # ✅ Return top_k results (excluding the searched product)
     return related_products[:top_k]
-
-
