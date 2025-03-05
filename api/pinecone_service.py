@@ -39,6 +39,81 @@ def get_postgres_connection():
     )
 
 
+# Fetch Single Product Data
+def fetch_single_product(product_id):
+    conn = get_postgres_connection()
+    cursor = conn.cursor()
+    
+    query = """
+    SELECT 
+        p.product_id, 
+        p.vendor_id, 
+        p.brand, 
+        p.name, 
+        p.description, 
+        COALESCE(c.name, 'Unknown') AS category_name, 
+        COALESCE(sc.name, 'Unknown') AS sub_category_name
+    FROM product p
+    LEFT JOIN sub_category sc ON p.sub_category_id = sc.sub_category_id
+    LEFT JOIN category c ON sc.category_id = c.category_id
+    WHERE p.product_id = %s
+    """
+    
+    cursor.execute(query, (product_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    if not row:
+        raise Exception(f"Product {product_id} not found in PostgreSQL")
+    
+    product_id, vendor_id, brand, name, description, category_name, sub_category_name = row
+    metadata = {
+        "vendor_id": vendor_id,
+        "brand": brand,
+        "name": name,
+        "description": description if description else "",
+        "category": category_name,
+        "sub_category": sub_category_name,
+    }
+    text = f"{brand} {name} {category_name} {sub_category_name} {description}"
+    return {"id": str(product_id), "text": text, "metadata": metadata}
+
+# Compute MPNet Embeddings for Single Product
+def compute_single_mpnet_embedding(product_id):
+    product_data = fetch_single_product(product_id)
+    embedding = model.encode(product_data["text"], convert_to_numpy=True, normalize_embeddings=True)
+    return (product_data["id"], embedding.tolist(), product_data["metadata"])
+
+# Insert Single Product Embedding
+def insert_embeddings_product(product_id):
+    try:
+        vector = compute_single_mpnet_embedding(product_id)
+        pinecone_vector = [{"id": vector[0], "values": vector[1], "metadata": vector[2]}]
+        index.upsert(vectors=pinecone_vector)
+        print(f"✅ Embedding inserted for product {product_id}")
+    except Exception as e:
+        raise e
+
+# Update Single Product Embedding
+def update_embeddings_product(product_id):
+    try:
+        vector = compute_single_mpnet_embedding(product_id)
+        pinecone_vector = [{"id": vector[0], "values": vector[1], "metadata": vector[2]}]
+        index.upsert(vectors=pinecone_vector)  # Upsert overwrites existing vector
+        print(f"✅ Embedding updated for product {product_id}")
+    except Exception as e:
+        raise e
+
+# Delete Single Product Embedding
+def delete_embeddings_product(product_id):
+    try:
+        index.delete(ids=[str(product_id)])
+        print(f"✅ Embedding deleted for product {product_id}")
+    except Exception as e:
+        raise e
+
+
 # ✅ Fetch Data from PostgreSQL
 def fetch_products():
     conn = get_postgres_connection()
